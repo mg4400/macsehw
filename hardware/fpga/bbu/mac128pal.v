@@ -53,12 +53,15 @@ module tsm(simclk, n_res,
    output wire s0, dtack;
    `power wire vcc;
 
+   reg qx;
+
    // We must implement RESET for simulation or else this will never
    // stabilize.
    always @(negedge n_res) begin
       // casl = 1; cash = 1; s0 = 1; dtack = 1;
 
       ras <= 1; vclk <= 1; q2 <= 1; q1 <= 1;
+      qx <= 1;
    end
 
    // Simulate combinatorial logic.
@@ -88,18 +91,30 @@ module tsm(simclk, n_res,
 	~(~pclk & q1 & s1 // video cycle
 	  | ~pclk & q1 & ~ramen & dtack // processor cycle
 	  | pclk & ~ras); // any other cycle
-      vclk <=
+      /* vclk <=
 	~(~q1 & pclk & q2 & vclk // divide by 8 (1MHz)
 	  | ~vclk & q1
 	  | ~vclk & ~pclk
-	  | ~vclk & ~q2);
+	  | ~vclk & ~q2); */
+      vclk <=
+	~(~sysclk // one-shot divide by 8 (1MHz)
+	  | q1
+	  | ~pclk
+	  | ~qx
+	  | ~q2);
       q1 <=
 	~(~pclk & q1
 	  | pclk & ~q1); // divide `pclk` by 2 (4MHz)
+      // TODO FIXME: Real PALs don't have this extra bit of memory!
+      qx <=
+	~(~q1 & ~pclk & qx // divide by 4 (2MHz)
+	  | ~qx & q1
+	  | ~qx & pclk);
       q2 <=
-	~(~q1 & pclk & q2 // divide by 4 (2MHz)
+        ~(~q1 & ~pclk & qx & q2 // divide by 8 (1MHz)
 	  | ~q2 & q1
-	  | ~q2 & ~pclk);
+	  | ~q2 & pclk
+	  | ~q2 & ~qx);
       end
    end
 endmodule
@@ -130,6 +145,9 @@ module lag(simclk, n_res,
       vshft <= 1; vsync <= 1; hsync <= 1; s1 <= 1; viapb6 <= 1;
       snddma <= 1; reslin <= 1; resnyb <= 1;
    end
+
+   // TODO FIXME: After converting to one-shot vclk, we have a few
+   // glitches still to fix up.
 
    // Simulate registered logic.
    always @(posedge sysclk) begin
@@ -231,6 +249,11 @@ the whole interplay works in detail.
    the CRT actually completes horizontal blanking and starts the
    regular visible area sweep before we de-assert *HSYNC, so actually
    we won't be drawing these pixels during horizontal blanking.
+
+   Nevertheless, if you do need a signal that covers the whole active
+   pixel period, you can logically OR together *HSYNC and VIAPB6.
+   Make sure that you use buffering between the VIA and VIAPB6 to
+   prevent the CPU from driving the CRT haywire.
 
 3. Now, the ultimate conclusion of the glitched counter.  When we
    wrap-around to zero, both *HSYNC and VIAPB6 are still asserted.  We
@@ -393,21 +416,22 @@ module tsg(simclk, n_res,
    // Simulate registered logic.
    always @(posedge sysclk) begin
       if (n_res) begin
-      // TODO VERIFY: q6 missing?
-      q6 <= ~(0);
+      q6 <= ~(~q3); // delayed copy of 1MHz q3 signal
       clkscc <=
-	~(clkscc & ~pclk & ~q4
-	  | clkscc & ~pclk & ~q3
-	  | clkscc & ~pclk & vclk
-	  | ~clkscc & pclk
-	  | ~clkscc & q4 & q3 & ~vclk); // skip one inversion every 32 cycles
+	~(clkscc & pclk & ~q4
+	  | clkscc & pclk & ~q6
+	  | clkscc & pclk & q3
+	  | ~clkscc & ~pclk
+	  | ~clkscc & q4 & q6 & ~q3); // skip one inversion every 32 cycles
       viacb1 <= ~(~keyclk); // buffer the keyboard clock
       pclk <= ~(pclk); // divide SYSCLK by 2 (8MHz)
-      q3 <= ~(~vclk); // `sysclk` / 16
+      q3 <=
+        ~(~q3 & ~vclk
+	  | vclk & q3); // `sysclk` / 16
       q4 <=
-	~(q4 & q3 & ~vclk // `sysclk` / 32
-	  | ~q4 & ~q3                       // } J for generating CLKSCC
-	  | ~q4 & vclk);
+	~(q4 & q6 & ~q3 // `sysclk` / 32
+	  | ~q4 & ~q6                       // } J for generating CLKSCC
+	  | ~q4 & q3);
       end
    end
 endmodule
@@ -431,7 +455,7 @@ module asg(simclk, n_res,
    // We must implement RESET for simulation or else this will never
    // stabilize.
    always @(negedge n_res) begin
-      n_dmald <= 1;
+      n_dmald <= 1; pwm <= 1;
       r5 <= 1; r4 <= 1; r3 <= 1; r2 <= 1; r1 <= 1; r0 <= 1;
    end
 
@@ -450,14 +474,52 @@ module asg(simclk, n_res,
 	 // N.B.: This expansion almost exceeds the term limit of the
 	 // PAL.
 
+	 // * Load value on *DMALD.
+
+	 // * If value is zero, set exit condition immediately.
+	 //   Otherwise, set "not exit" condition.  This way we can
+	 //   load 0x20 and not immediately quit.
+
+	 // * Regular loop, shift and check for exit condition on
+	 //   shifted condition.  Okay, that's a bit ugly, but fine.
+	 //   It would be simpler to check for exit condition on
+	 //   stored value.
+
+	 // ((a) ? ((b) ? d : e) : c);
+	 // (a & ((b & c) | (~b & d))) | (~a & c);
+	 // r0 <=
+	 //   ~(~a & ~c
+	 //     | ~a & ~c & b
+	 //     | ~a & ~c & ~e
+	 //     | ~b & a & ~e
+	 //     | ~b & a & ~e & ~c
+	 //     | ~b & ~c & ~a & ~c
+	 //     | ~b & ~c & ~e & a
+	 //     | ~b & ~c & ~e & ~c
+	 //     | ~d & a & b
+	 //     | ~d & a & b & ~c
+	 //     | ~d & a & ~e
+	 //     | ~d & a & ~e & ~c
+	 //     | ~d & ~c & ~a
+	 //     | ~d & ~c & b & a
+	 //     | ~d & ~c & b
+	 //     | ~d & ~c & ~e & a
+	 //     | ~d & ~c & ~e & ~c);
+
+	 r0 <= (~n_dmald) ? rdq0 : ((pwm & vclk) ? r1 : r0);
+
 	 // TODO FIXME: Not in PAL equation format.
-	 r0 <= n_dmald & (r0 ^ ~pwm);
-	 r1 <= n_dmald & (r1 ^ (r0 & ~pwm));
-	 r2 <= n_dmald & (r2 ^ (r1 & r0 & ~pwm));
-	 r3 <= n_dmald & (r3 ^ (r2 & r1 & r0 & ~pwm));
-	 r4 <= n_dmald & (r4 ^ (r3 & r2 & r1 & r0 & ~pwm));
-	 r5 <= n_dmald & (r5 ^ (r4 & r3 & r2 & r1 & r0 & ~pwm));
-	 pwm <= n_dmald & r5 & r4 & r3 & r2 & r1 & r0;
+	 r0 <= (~n_dmald) ? rdq0 : ((pwm & vclk) ? r1 : r0);
+	 r1 <= (~n_dmald) ? rdq1 : ((pwm & vclk) ? r2 : r1);
+	 r2 <= (~n_dmald) ? rdq2 : ((pwm & vclk) ? r3 : r2);
+	 r3 <= (~n_dmald) ? rdq3 : ((pwm & vclk) ? r4 : r3);
+	 r4 <= (~n_dmald) ? rdq4 : ((pwm & vclk) ? r5 : r4);
+	 r5 <= (~n_dmald) ? rdq5 : ((pwm & vclk) ? (r0 ^ r1) : r5);
+	 pwm <= (~n_dmald)
+	   ? ((~rdq5 & ~rdq4 & ~rdq3 & ~rdq2 & ~rdq1 & ~rdq0) ? 0 : 1)
+	     : ((pwm & vclk)
+		? (((r0 ^ r1) & ~r5 & ~r4 & ~r3 & ~r2 & ~r1) ? 0 : 1)
+		: pwm);
       end
    end
 endmodule
