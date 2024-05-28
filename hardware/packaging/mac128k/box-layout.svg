@@ -285,8 +285,8 @@
      style="display:none"
      sodipodi:insensitive="true">
     <image
-       sodipodi:absref="/home/members/src/macsehw/hardware/packaging/mac128k/front_face.png"
-       xlink:href="front_face.png"
+       sodipodi:absref="/home/members/src/macsehw/hardware/packaging/mac128k/front_face.jpg"
+       xlink:href="front_face.jpg"
        width="483.16299"
        height="520.90814"
        preserveAspectRatio="none"
@@ -294,8 +294,8 @@
        x="43.639313"
        y="215.3073" />
     <image
-       sodipodi:absref="/home/members/src/macsehw/hardware/packaging/mac128k/side_face.png"
-       xlink:href="side_face.png"
+       sodipodi:absref="/home/members/src/macsehw/hardware/packaging/mac128k/side_face.jpg"
+       xlink:href="side_face.jpg"
        style="display:inline"
        y="217.33897"
        x="536.34375"

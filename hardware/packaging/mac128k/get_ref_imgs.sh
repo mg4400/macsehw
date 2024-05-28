@@ -6,5 +6,5 @@
 # Get the Macintosh 128k box reference images, transformed from angled
 # photos sourced from a probably now-expired Ebay listing.
 
-curl -L -o front_face.png 'https://drive.google.com/uc?export=download&id=1T-Mb_VPAsTLAOTtTWOvSsjf4FuSHZDkA'
-curl -L -o side_face.png 'https://drive.google.com/uc?export=download&id=11inXjFEUjz548vJmjLY5IQ_QweclYqRE'
+git show images:hardware/packaging/mac128k/front_face.jpg >front_face.jpg
+git show images:hardware/packaging/mac128k/side_face.jpg >side_face.jpg
