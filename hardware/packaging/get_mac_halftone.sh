@@ -3,11 +3,8 @@
 # bandwidth limits, so let's try to keep away from those as much as
 # possible.
 
-# TODO FIXME: We should use scripting to generate this from the
-# original photos, the current image was just hacked together via some
-# GUI photo editing.
-
 # NOTE: Processing from original photo:
 # Crop to: upper left corner 1737,2087 size 1164x1374
+# Adjust brightness/contrast when converting to grayscale
 
-curl -L -o mac_halftone.png 'https://drive.google.com/uc?export=download&id=1YTshjBSWvq5P5nKhFLGIlJpkzA0Tcunp'
+convert -transpose -flip -crop 1164x1374+1737+423 -grayscale Rec709Luma -brightness-contrast 10,70 photos/DSC_4197.JPG mac_halftone.png
